@@ -80,6 +80,9 @@ final readonly class LlmConfig
         $groups = [];
 
         foreach ($models as $model) {
+            if ($model->type !== 'chat') {
+                throw new \InvalidArgumentException('Chat configuration requires chat models.');
+            }
             // A group shares one address, key and effort; a different effort starts a new step.
             $key = ($model->connection_id ? 'c'.$model->connection_id : 'p'.$model->provider).'|'.$model->effort;
             $groups[$key] ??= ['connection' => $model->providerConnection, 'provider' => $model->providerConnection?->driver ?? $model->provider, 'effort' => $model->effort, 'models' => []];

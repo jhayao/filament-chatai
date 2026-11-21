@@ -22,6 +22,8 @@ class Usage extends Model
 {
     public const KIND_CHAT = 'chat';
 
+    public const KIND_EMBEDDING = 'embedding';
+
     public const KIND_SPEECH = 'speech';
 
     public const KIND_TRANSCRIPTION = 'transcription';

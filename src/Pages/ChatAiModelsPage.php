@@ -7,6 +7,8 @@ use Filament\Actions\Action;
 use Filament\Actions\CreateAction;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
+use Filament\ChatAi\Embeddings\EmbeddingException;
+use Filament\ChatAi\Embeddings\EmbeddingService;
 use Filament\ChatAi\Llm\LlmClient;
 use Filament\ChatAi\Llm\LlmConfig;
 use Filament\ChatAi\Llm\LlmException;
@@ -93,12 +95,14 @@ class ChatAiModelsPage extends Page implements HasTable
             ->paginated(false)
             ->columns([
                 TextColumn::make('role')->label($t('role'))->badge()
-                    ->state(fn (AiModel $record): string => ! $record->enabled ? $t('off') : ($record->id === $firstEnabled() ? $t('main') : $t('fallback')))
+                    ->state(fn (AiModel $record): string => ! $record->enabled ? $t('off') : ($record->type === 'embedding' ? $t('embedding') : ($record->id === $firstEnabled() ? $t('main') : $t('fallback'))))
                     ->color(fn (string $state): string => match ($state) {
                         $t('main') => 'success',
                         $t('fallback') => 'warning',
                         default => 'gray',
                     }),
+                TextColumn::make('type')->label($t('type'))->badge()->formatStateUsing(fn (string $state): string => $t($state)),
+                TextColumn::make('dimensions')->label($t('dimensions'))->placeholder('—'),
                 TextColumn::make('model')->label($t('model'))->weight('medium')->searchable()->copyable(),
                 TextColumn::make('providerConnection.name')->label($t('provider'))->badge()->color('gray')
                     ->placeholder(fn (AiModel $record): string => __('chatai::chatai.settings.provider_'.$record->provider)),
@@ -116,7 +120,7 @@ class ChatAiModelsPage extends Page implements HasTable
             ->headerActions([
                 CreateAction::make()->label($t('create'))->model(AiModel::class)
                     ->schema($this->form(...))
-                    ->fillForm(['enabled' => true, 'connection_id' => AiConnection::query()->where('enabled', true)->orderBy('id')->value('id')])
+                    ->fillForm(['type' => 'chat', 'enabled' => true, 'connection_id' => AiConnection::query()->where('enabled', true)->orderBy('id')->value('id')])
                     ->mutateDataUsing(fn (array $data): array => [...$this->withDriver($data), 'sort' => (int) AiModel::query()->max('sort') + 1]),
             ])
             ->emptyStateHeading($t('empty'));
@@ -131,21 +135,29 @@ class ChatAiModelsPage extends Page implements HasTable
 
         return [
             Grid::make(2)->schema([
+                
+                
                 Select::make('connection_id')->label($t('provider'))->required()->native(false)->live()
+                    ->native(false)
                     ->options(fn (): array => AiConnection::query()->orderBy('name')->get()
                         ->mapWithKeys(fn (AiConnection $c): array => [$c->id => $c->name.' — '.__('chatai::chatai.settings.provider_'.$c->driver)])->all())
                     ->helperText($t('provider_help')),
                 TextInput::make('model')->label($t('model'))->required()->maxLength(120)->placeholder('claude-opus-5-5'),
-                Select::make('effort')->label($t('effort'))->helperText($t('effort_help'))->native(false)->placeholder($t('effort_default'))
+                Select::make('type')->label($t('type'))->required()->default('chat')->live()->options(['chat' => $t('chat'), 'embedding' => $t('embedding')])
+                    ->in(fn (Get $get): array => AiConnection::query()->whereKey($get('connection_id'))->value('driver') === 'anthropic' ? ['chat'] : ['chat', 'embedding'])
+                    ->native(false)
+                    ->columnSpan(1),
+                TextInput::make('dimensions')->label($t('dimensions'))->integer()->minValue(1)->maxValue(4294967295)->visible(fn (Get $get): bool => $get('type') === 'embedding'),
+                Select::make('effort')->visible(fn (Get $get): bool => $get('type') !== 'embedding')->label($t('effort'))->helperText($t('effort_help'))->native(false)->placeholder($t('effort_default'))
                     ->options(fn (Get $get): array => LlmConfig::effortOptions(AiConnection::query()->whereKey($get('connection_id'))->value('driver')))
                     ->in(fn (Get $get): array => LlmConfig::EFFORTS[AiConnection::query()->whereKey($get('connection_id'))->value('driver')] ?? [])
-                    ->columnSpanFull(),
+                    ->columnSpan(1),
             ]),
             Section::make($t('prices'))->description($t('prices_help'))->compact()->columns(2)->schema([
                 TextInput::make('input_price')->label($t('input'))->numeric()->minValue(0),
-                TextInput::make('output_price')->label($t('output'))->numeric()->minValue(0),
-                TextInput::make('cache_read_price')->label(__('chatai::chatai.settings.cache_read_price'))->numeric()->minValue(0)->placeholder(__('chatai::chatai.settings.cache_read_default')),
-                TextInput::make('cache_write_price')->label(__('chatai::chatai.settings.cache_write_price'))->numeric()->minValue(0)->placeholder(__('chatai::chatai.settings.cache_write_default')),
+                TextInput::make('output_price')->visible(fn (Get $get): bool => $get('type') !== 'embedding')->label($t('output'))->numeric()->minValue(0),
+                TextInput::make('cache_read_price')->visible(fn (Get $get): bool => $get('type') !== 'embedding')->label(__('chatai::chatai.settings.cache_read_price'))->numeric()->minValue(0)->placeholder(__('chatai::chatai.settings.cache_read_default')),
+                TextInput::make('cache_write_price')->visible(fn (Get $get): bool => $get('type') !== 'embedding')->label(__('chatai::chatai.settings.cache_write_price'))->numeric()->minValue(0)->placeholder(__('chatai::chatai.settings.cache_write_default')),
             ]),
             Toggle::make('enabled')->label($t('enabled')),
         ];
@@ -157,6 +169,16 @@ class ChatAiModelsPage extends Page implements HasTable
     public function testModel(AiModel $record): void
     {
         ChatAiSettings::flush();
+        if ($record->type === 'embedding') {
+            try {
+                $result = app(EmbeddingService::class)->embed($record, 'Embedding connection test');
+                Notification::make()->success()->title(__('chatai::chatai.models.embedding_test_ok', ['dimensions' => $result->dimensions]))->send();
+            } catch (EmbeddingException $e) {
+                Notification::make()->danger()->title(__('chatai::chatai.settings.test_failed'))->body($e->getMessage())->send();
+            }
+
+            return;
+        }
         $config = LlmConfig::fromModels([$record->load('providerConnection')]);
         $started = hrtime(true);
 
@@ -184,6 +206,13 @@ class ChatAiModelsPage extends Page implements HasTable
     protected function withDriver(array $data): array
     {
         $driver = AiConnection::query()->whereKey($data['connection_id'] ?? null)->value('driver');
+        if (($data['type'] ?? 'chat') === 'embedding') {
+            foreach (['effort', 'output_price', 'cache_read_price', 'cache_write_price'] as $field) {
+                $data[$field] = null;
+            }
+        } else {
+            $data['dimensions'] = null;
+        }
 
         return $driver ? [...$data, 'provider' => $driver] : $data;
     }

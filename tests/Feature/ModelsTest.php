@@ -1,13 +1,17 @@
 <?php
 
 use Filament\ChatAi\Llm\LlmConfig;
+use Filament\ChatAi\Models\AiConnection;
 use Filament\ChatAi\Models\AiModel;
+use Filament\ChatAi\Models\Usage;
 use Filament\ChatAi\Pages\ChatAiModelsPage;
+use Filament\ChatAi\Pages\ChatAiProvidersPage;
 use Filament\ChatAi\Pages\ChatAiSettingsPage;
 use Filament\ChatAi\Settings\ChatAiSettings;
 use Filament\ChatAi\Support\Pricing;
 use Filament\ChatAi\Tests\Fixtures\User;
 use Filament\Facades\Filament;
+use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
 
 beforeEach(function () {
@@ -72,4 +76,47 @@ it('opens settings as tabs', function () {
 it('names the settings page in the menu and title', function () {
     expect(ChatAiSettingsPage::getNavigationLabel())->toBe(__('chatai::chatai.settings.title'));
     expect((new ChatAiSettingsPage)->getTitle())->toBe(__('chatai::chatai.settings.title'));
+});
+
+it('creates embedding models and clears chat-only fields', function () {
+    $connection = AiConnection::create(['name' => 'Vectors', 'driver' => 'openai', 'enabled' => true]);
+    Livewire::test(ChatAiModelsPage::class)
+        ->callTableAction('create', data: ['connection_id' => $connection->id, 'type' => 'embedding', 'model' => 'vectors', 'dimensions' => 256, 'enabled' => true, 'input_price' => 0.1])
+        ->assertHasNoTableActionErrors();
+    $model = AiModel::where('model', 'vectors')->firstOrFail();
+    expect($model->type)->toBe('embedding')->and($model->dimensions)->toBe(256)->and($model->output_price)->toBeNull()->and($model->effort)->toBeNull();
+});
+
+it('rejects Anthropic embedding models in the model form', function () {
+    $connection = AiConnection::create(['name' => 'Claude', 'driver' => 'anthropic', 'enabled' => true]);
+    Livewire::test(ChatAiModelsPage::class)
+        ->callTableAction('create', data: ['connection_id' => $connection->id, 'type' => 'embedding', 'model' => 'vectors', 'enabled' => true])
+        ->assertHasTableActionErrors(['type']);
+});
+
+it('tests embeddings through their endpoint and records provider test usage', function () {
+    $connection = AiConnection::create(['name' => 'Vectors', 'driver' => 'openai', 'base_url' => 'https://vectors.test/v1', 'enabled' => true]);
+    AiModel::create(['connection_id' => $connection->id, 'provider' => 'openai', 'type' => 'chat', 'model' => 'disabled', 'enabled' => false, 'sort' => 0]);
+    $model = AiModel::create(['connection_id' => $connection->id, 'provider' => 'openai', 'type' => 'embedding', 'model' => 'vectors', 'enabled' => true, 'sort' => 1]);
+    Http::fake(['*' => Http::response(['model' => 'vectors', 'data' => [['index' => 0, 'embedding' => [1, 2]]]])]);
+    Livewire::test(ChatAiModelsPage::class)->callTableAction('test', $model);
+    Livewire::test(ChatAiProvidersPage::class)->callTableAction('test', $connection);
+    expect(Usage::where('kind', 'embedding')->count())->toBe(2);
+    Http::assertSentCount(2);
+});
+
+it('clears persisted chat fields when changing a model to embeddings', function () {
+    $connection = AiConnection::create(['name' => 'Vectors', 'driver' => 'openai', 'enabled' => true]);
+    $model = AiModel::create(['connection_id' => $connection->id, 'provider' => 'openai', 'model' => 'convert', 'effort' => 'high', 'output_price' => 5, 'cache_read_price' => 1, 'cache_write_price' => 2]);
+    Livewire::test(ChatAiModelsPage::class)->callTableAction('edit', $model, data: ['type' => 'embedding', 'dimensions' => 2])->assertHasNoTableActionErrors();
+    $model->refresh();
+    expect($model->type)->toBe('embedding')->and($model->dimensions)->toBe(2)->and($model->effort)->toBeNull()
+        ->and($model->output_price)->toBeNull()->and($model->cache_read_price)->toBeNull()->and($model->cache_write_price)->toBeNull();
+});
+
+it('rejects nonpositive embedding dimensions', function () {
+    $connection = AiConnection::create(['name' => 'Vectors', 'driver' => 'openai', 'enabled' => true]);
+    Livewire::test(ChatAiModelsPage::class)
+        ->callTableAction('create', data: ['connection_id' => $connection->id, 'type' => 'embedding', 'model' => 'vectors', 'dimensions' => 0, 'enabled' => true])
+        ->assertHasTableActionErrors(['dimensions']);
 });

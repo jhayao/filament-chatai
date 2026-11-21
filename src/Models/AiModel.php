@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 /**
+ * @property string $type
+ * @property ?int $dimensions
  * @property string $provider
  * @property string $model
  * @property ?string $effort
@@ -25,9 +27,11 @@ class AiModel extends Model
 
     protected $guarded = [];
 
+    protected $attributes = ['type' => 'chat'];
+
     protected function casts(): array
     {
-        return ['enabled' => 'boolean', 'sort' => 'integer'];
+        return ['enabled' => 'boolean', 'sort' => 'integer', 'dimensions' => 'integer'];
     }
 
     /**
@@ -63,6 +67,6 @@ class AiModel extends Model
     public static function chain(): Collection
     {
         // A model whose provider is switched off is skipped too.
-        return static::listed()->filter(fn (self $m): bool => $m->enabled && ($m->providerConnection?->enabled ?? true))->values();
+        return static::listed()->filter(fn (self $m): bool => $m->type === 'chat' && $m->enabled && ($m->providerConnection?->enabled ?? true))->values();
     }
 }

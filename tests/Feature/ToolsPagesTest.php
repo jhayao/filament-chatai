@@ -314,3 +314,12 @@ it('answers clarification questions in the tool editors test chat', function () 
         ->and($message->fresh()->components[0]['status'])->toBe('answered')
         ->and($conversation->messages()->where('role', 'user')->first()->content)->toBe("Qual formato?\nTabela");
 });
+
+it('rejects embedding models submitted to the chat playground', function () {
+    $model = AiModel::create(['provider' => 'openai', 'model' => 'vectors', 'type' => 'embedding']);
+    $id = $this->postJson(route('filament.admin.chatai.playground.store'))->assertCreated()->json('id');
+    $this->postJson(route('filament.admin.chatai.playground.messages', $id), [
+        'message' => 'hello',
+        'draft' => ['mode' => 'code', 'tool' => 'sales-stats', 'options' => ['model_id' => $model->id]],
+    ])->assertUnprocessable()->assertJsonValidationErrors('draft.options.model_id');
+});

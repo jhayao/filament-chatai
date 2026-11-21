@@ -164,10 +164,16 @@ class ChatAiProvidersPage extends Page implements HasTable
      */
     public function testConnection(AiConnection $record): void
     {
-        $model = $record->models()->orderBy('sort')->first();
+        $model = $record->models()->where('enabled', true)->orderBy('sort')->orderBy('id')->first();
 
         if (! $model) {
             Notification::make()->warning()->title(__('chatai::chatai.providers.no_model'))->send();
+
+            return;
+        }
+
+        if ($model->type === 'embedding') {
+            (new ChatAiModelsPage)->testModel($model);
 
             return;
         }

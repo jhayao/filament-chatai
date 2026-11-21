@@ -67,7 +67,7 @@ final class Pricing
         ChatAiSettings::apply();
 
         // Prices set on each model in the models list, then the older price rows.
-        $rows = AiModel::listed()
+        $rows = AiModel::listed()->where('type', 'chat')
             ->map(fn (AiModel $m): array => ['model' => $m->model, 'input' => $m->input_price, 'output' => $m->output_price, 'cache_read' => $m->cache_read_price, 'cache_write' => $m->cache_write_price])
             ->concat((array) config('chatai.pricing.models', []));
 

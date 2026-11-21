@@ -289,7 +289,7 @@ class ChatAiToolEditorPage extends Page
                 'playground' => [
                     'mode' => $this->mode,
                     'tool' => $this->tool,
-                    'models' => AiModel::listed()->map(fn (AiModel $m): array => [
+                    'models' => AiModel::listed()->where('type', 'chat')->map(fn (AiModel $m): array => [
                         'id' => $m->id,
                         'driver' => $m->providerConnection?->driver ?? $m->provider,
                         'effort' => $m->effort,

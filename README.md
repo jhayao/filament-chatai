@@ -429,3 +429,71 @@ include and what to expect.
 ## License
 
 MIT. See [LICENSE.md](LICENSE.md).
+
+## Embedding models
+
+After upgrading, publish the new migration and run it:
+
+```bash
+php artisan vendor:publish --tag=chatai-migrations
+php artisan migrate
+```
+
+Existing models default to **Chat**. In **ChatAI → Providers**, configure an enabled
+OpenAI-compatible connection with an embeddings endpoint (for example, an API base
+URL ending in `/v1`). Keys remain encrypted; empty URL/key fields use the existing
+settings and environment defaults. In **Models**, add an enabled **Embedding** model
+with its provider's model identifier, optional positive dimensions, and input price
+per million tokens. Anthropic connections do not support this API. Embedding models
+are excluded from chat selection and fallback chains. Model and provider tests call
+the embeddings service, track usage, and show only the returned dimension count.
+
+```php
+use Filament\ChatAi\Embeddings\EmbeddingContext;
+use Filament\ChatAi\Embeddings\EmbeddingService;
+use Filament\ChatAi\Models\AiModel;
+
+$model = AiModel::query()
+    ->where('type', 'embedding')
+    ->where('model', 'text-embedding-3-small')
+    ->firstOrFail(); // Choose the specific model/connection your application uses.
+
+$embeddings = app(EmbeddingService::class);
+$single = $embeddings->embed($model, 'A document to search');
+$vector = $single->vectors[0];
+
+$batch = $embeddings->embed($model, ['First document', 'Second document']);
+// $batch->vectors follows input order, even if the provider responds out of order.
+
+// Jobs and CLI callers can supply attribution explicitly (or use an empty context).
+$result = $embeddings->embed($model, 'Search query', new EmbeddingContext(
+    user: $user,
+    panelId: 'admin',
+    tenantId: '42',
+));
+```
+
+`EmbeddingResult` exposes `vectors`, configured model row ID (`modelId`),
+provider-reported model name (`model`), actual `dimensions`, nullable `inputTokens`,
+and nullable estimated `cost`. Inputs must be one nonblank string or a nonempty
+list of nonblank strings. Requests follow the
+[OpenAI embeddings API](https://developers.openai.com/api/reference/resources/embeddings/methods/create),
+using float encoding and sending dimensions only when configured. Applications can
+bind `Filament\ChatAi\Embeddings\EmbeddingClient` to replace the HTTP implementation.
+Invalid inputs, unavailable models/providers, exhausted budgets, malformed responses,
+and provider failures throw `EmbeddingException`; transport errors omit provider
+bodies, credentials, and input.
+
+Successful calls record the exact selected provider connection and configured model,
+latency, reported input tokens, and input cost. Without an explicit context, the
+active Filament user, panel and tenant are used when available. Embeddings contribute
+to cost/token totals, model breakdowns, and the provider's combined chat/embedding
+daily and monthly spending limits; question counts remain chat-only. Missing token
+usage is stored as unknown, and missing usage or pricing produces an unpriced request
+with a null cost. Tokens are never guessed. Limits are checked before a request;
+a request can take spending over the limit, and unpriced requests cannot contribute
+a known cost.
+
+Use **the same embedding model and dimensions for indexed content and queries**.
+There is no automatic model fallback, retry, chunking, public HTTP endpoint, vector
+storage, document indexing, or automatic chat retrieval in this API.

@@ -19,6 +19,7 @@ use Filament\Facades\Filament;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -52,7 +53,7 @@ class PlaygroundController
             'draft.mode' => ['required', 'in:'.ToolDraft::MODE_CODE.','.ToolDraft::MODE_CUSTOM],
             'draft.tool' => ['nullable', 'string', 'max:64'],
             'draft.data' => ['nullable', 'array'],
-            'draft.options.model_id' => ['nullable', 'integer', 'exists:chatai_models,id'],
+            'draft.options.model_id' => ['nullable', 'integer', Rule::exists('chatai_models', 'id')->where('type', 'chat')],
             'draft.options.effort' => ['nullable', 'in:low,medium,high,xhigh,max'],
             'draft.options.max_tokens' => ['nullable', 'integer', 'min:256', 'max:128000'],
             'draft.options.temperature' => ['nullable', 'numeric', 'min:0', 'max:1'],
